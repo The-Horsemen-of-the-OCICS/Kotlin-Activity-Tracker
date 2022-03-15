@@ -1,12 +1,12 @@
 package com.ocics.activitytracker
 
+import android.Manifest
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -16,7 +16,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.gms.location.*
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
@@ -24,7 +23,6 @@ import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.MapStyleOptions
 import com.ocics.activitytracker.databinding.ActivityMainBinding
 import java.lang.Exception
 import java.text.SimpleDateFormat
@@ -32,14 +30,11 @@ import java.util.*
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     val TAG = "MainActivity"
-    val ACTIVITY_TRANSITION_INTENT = "ACTIVITY_TRANSITION_INTENT"
 
     var lastActivity = ""
     var lastTransitionTime = System.currentTimeMillis()
 
-    lateinit var mBroadcastReceiver: BroadcastReceiver
     lateinit var mBinding: ActivityMainBinding
-    lateinit var mClient: ActivityRecognitionClient
 
     private lateinit var mMap: GoogleMap
     private lateinit var mFusedLocationProviderClient: FusedLocationProviderClient
@@ -49,7 +44,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         // Create view binding
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
-        mClient = ActivityRecognition.getClient(this)
 
         // Init map
         val mapFragment = supportFragmentManager
@@ -57,16 +51,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         mapFragment.getMapAsync(this)
         mFusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this)
 
-        // Init receiver
-        mBroadcastReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val extras = intent.extras?.keySet()?.map { "$it: ${intent.extras?.get(it)}" }
-                    ?.joinToString { it }
-                Log.d(TAG, intent.toString() + extras.toString())
-                val type = intent.getIntExtra("type", -1)
-                onActivityChanged(type)
-            }
-        }
         getTimeText()
         checkPermissionAndStartService()
     }
@@ -79,8 +63,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        LocalBroadcastManager.getInstance(this)
-            .registerReceiver(mBroadcastReceiver, IntentFilter(ACTIVITY_TRANSITION_INTENT))
     }
 
     private fun hideSystemBars() {
@@ -92,65 +74,75 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     }
 
     override fun onDestroy() {
+        stopService(Intent(this, ActivityRecognitionService::class.java))
         super.onDestroy()
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(mBroadcastReceiver)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.hasExtra("type")) {
+            val type = intent.getIntExtra("type", -1)
+            onActivityChanged(type)
+        }
     }
 
     private fun checkPermissionAndStartService() {
         if (PackageManager.PERMISSION_GRANTED != ContextCompat.checkSelfPermission(
                 this@MainActivity,
-                android.Manifest.permission.ACTIVITY_RECOGNITION
+                Manifest.permission.ACTIVITY_RECOGNITION
             ) + ContextCompat.checkSelfPermission(
                 this@MainActivity,
-                android.Manifest.permission.ACCESS_FINE_LOCATION
+                Manifest.permission.ACCESS_FINE_LOCATION
             )
         ) {
             ActivityCompat.requestPermissions(
                 this@MainActivity,
                 arrayOf(
-                    android.Manifest.permission.ACTIVITY_RECOGNITION,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
-                    android.Manifest.permission.ACCESS_FINE_LOCATION
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION
                 ), 1000
             )
         } else {
-            startService(Intent(this, ActivityDetectionBackgroundService::class.java))
-            requestTransitionUpdates()
+            startServiceAndTasks()
         }
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            1000 -> {
-                if ((grantResults.isNotEmpty() &&
-                            grantResults[0] == PackageManager.PERMISSION_GRANTED)
-                ) {
-                    stopService(Intent(this, ActivityDetectionBackgroundService::class.java))
-                    startService(Intent(this, ActivityDetectionBackgroundService::class.java))
-                } else {
-                    mBinding.activityText.text = "No Permission Granted"
-                }
+    private fun startServiceAndTasks() {
+        Log.d(TAG, "startServiceAndTasks")
+        stopServiceAndTasks()
+
+        startService(Intent(this, ActivityRecognitionService::class.java))
+        val pendingIntent = PendingIntent.getBroadcast(this, 2001,  Intent(packageName), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+        val task = ActivityRecognitionClient(this).requestActivityTransitionUpdates(getActivityTransitionRequest(),
+            pendingIntent)
+        task.run {
+            addOnSuccessListener {
+                Log.d(TAG, "requestActivityTransitionUpdates added")
+            }
+            addOnFailureListener {
+                Log.d(TAG, "requestActivityTransitionUpdates failed")
+            }
+        }
+
+    }
+
+    private fun stopServiceAndTasks() {
+        stopService(Intent(this, ActivityRecognitionService::class.java))
+        val pendingIntent = PendingIntent.getBroadcast(this, 2001,  Intent(packageName), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+
+        val task = ActivityRecognitionClient(this).removeActivityTransitionUpdates(
+            pendingIntent)
+
+        task.run {
+            addOnSuccessListener {
+                Log.d(TAG, "removeActivityTransitionUpdates added")
+            }
+            addOnFailureListener {
+                Log.d(TAG, "removeActivityTransitionUpdates failed")
             }
         }
     }
 
-    private fun requestTransitionUpdates() {
-        mClient.requestActivityTransitionUpdates(
-            getActivityTransitionRequest(),
-            getPendingIntent()
-        )
-            .addOnSuccessListener {
-                Log.d(TAG, "Task added successfully")
-            }
-            .addOnFailureListener {
-                Log.d(TAG, "Task added failed")
-            }
-    }
 
     private fun getActivityTransitionRequest(): ActivityTransitionRequest {
         val transitions = mutableListOf<ActivityTransition>()
@@ -201,10 +193,38 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         return ActivityTransitionRequest(transitions)
     }
 
-    private fun getPendingIntent(): PendingIntent {
-        val intent = Intent(this, ActivityTransitionReceiver::class.java)
-        return PendingIntent.getBroadcast(this, 112, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            1000 -> {
+                if ((grantResults.isNotEmpty() &&
+                            grantResults[0] == PackageManager.PERMISSION_GRANTED)
+                ) {
+                    Log.d(TAG, ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.ACCESS_FINE_LOCATION).toString())
+                    if (ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.ACCESS_FINE_LOCATION) ==
+                                PackageManager.PERMISSION_GRANTED) {
+                        getDeviceLocation()
+                    }
+                    if (ContextCompat.checkSelfPermission(
+                            this@MainActivity,
+                            Manifest.permission.ACTIVITY_RECOGNITION) ==
+                        PackageManager.PERMISSION_GRANTED){
+                        startServiceAndTasks()
+
+                    }
+                } else {
+                    mBinding.activityText.text = "No Permission Granted"
+                }
+            }
+        }
     }
 
     private fun onActivityChanged(activityType: Int) {
