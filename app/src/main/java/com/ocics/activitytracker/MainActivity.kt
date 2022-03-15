@@ -98,9 +98,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             ActivityCompat.requestPermissions(
                 this@MainActivity,
                 arrayOf(
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACTIVITY_RECOGNITION,
                     Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACTIVITY_RECOGNITION
                 ), 1000
             )
         } else {
@@ -210,8 +209,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                         Manifest.permission.ACCESS_FINE_LOCATION).toString())
                     if (ContextCompat.checkSelfPermission(
                             this@MainActivity,
-                            Manifest.permission.ACCESS_FINE_LOCATION) ==
+                            Manifest.permission.ACCESS_COARSE_LOCATION) ==
                                 PackageManager.PERMISSION_GRANTED) {
+                        updateLocationUI()
                         getDeviceLocation()
                     }
                     if (ContextCompat.checkSelfPermission(
@@ -219,7 +219,6 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                             Manifest.permission.ACTIVITY_RECOGNITION) ==
                         PackageManager.PERMISSION_GRANTED){
                         startServiceAndTasks()
-
                     }
                 } else {
                     mBinding.activityText.text = "No Permission Granted"
