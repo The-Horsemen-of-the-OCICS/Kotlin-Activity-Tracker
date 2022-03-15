@@ -23,6 +23,8 @@ import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.net.PlacesClient
 import com.ocics.activitytracker.databinding.ActivityMainBinding
 import java.lang.Exception
 import java.text.SimpleDateFormat
@@ -38,6 +40,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private lateinit var mMap: GoogleMap
     private lateinit var mFusedLocationProviderClient: FusedLocationProviderClient
+    lateinit var mPlacesClient: PlacesClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,6 +52,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val mapFragment = supportFragmentManager
             .findFragmentById(R.id.map) as SupportMapFragment
         mapFragment.getMapAsync(this)
+        Places.initialize(this, BuildConfig.MAPS_API_KEY);
+        mPlacesClient = Places.createClient(this)
         mFusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this)
 
         getTimeText()
@@ -204,12 +209,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 if ((grantResults.isNotEmpty() &&
                             grantResults[0] == PackageManager.PERMISSION_GRANTED)
                 ) {
-                    Log.d(TAG, ContextCompat.checkSelfPermission(
-                        this@MainActivity,
-                        Manifest.permission.ACCESS_FINE_LOCATION).toString())
                     if (ContextCompat.checkSelfPermission(
                             this@MainActivity,
-                            Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                            Manifest.permission.ACCESS_FINE_LOCATION) ==
                                 PackageManager.PERMISSION_GRANTED) {
                         updateLocationUI()
                         getDeviceLocation()
@@ -291,11 +293,10 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         try {
             val locationResult = mFusedLocationProviderClient.lastLocation
             locationResult.addOnCompleteListener(this) { task ->
-                if (task.isSuccessful) {
+                if (task.isSuccessful && task.result != null) {
                     Log.d(TAG, "Current location: ${task.result}")
                     val cameraPosition = CameraPosition.Builder().target(LatLng(task.result.latitude, task.result.longitude)).zoom(12f).build()
                     mMap.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition))
-
                 } else {
                     Log.d(TAG, "Current location is null.")
                 }
