@@ -19,7 +19,7 @@ class MediaPlayerService : Service(), OnCompletionListener,
     OnBufferingUpdateListener, OnAudioFocusChangeListener {
     // Binder given to clients
     private val iBinder: IBinder = LocalBinder()
-    override fun onBind(intent: Intent): IBinder? {
+    override fun onBind(intent: Intent): IBinder {
         return iBinder
     }
 
