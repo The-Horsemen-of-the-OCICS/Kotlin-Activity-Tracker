@@ -29,7 +29,7 @@ class ActivityRecognitionReceiver : BroadcastReceiver() {
                         it.type == DetectedActivity.RUNNING ||
                         it.type == DetectedActivity.IN_VEHICLE
             }?.sortedByDescending { it.confidence }?.run {
-                if (isNotEmpty()) {
+                if (isNotEmpty() && this[0].confidence >= 50) {
                     notifyActivity(context, this[0])
                 }
             }
