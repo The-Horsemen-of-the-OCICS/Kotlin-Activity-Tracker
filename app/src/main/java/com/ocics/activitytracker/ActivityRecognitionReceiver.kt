@@ -15,7 +15,7 @@ class ActivityRecognitionReceiver : BroadcastReceiver() {
         val bundle = intent.extras
         if (bundle != null) {
             for (key in bundle.keySet()) {
-                Log.e("ActivityRecognitionReceiver", key + " : " + if (bundle[key] != null) bundle[key] else "NULL")
+                Log.d("ActivityRecognitionReceiver", key + " : " + if (bundle[key] != null) bundle[key] else "NULL")
             }
         }
         if (ActivityRecognitionResult.hasResult(intent)) {

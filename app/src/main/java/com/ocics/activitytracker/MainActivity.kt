@@ -67,13 +67,11 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (checkPermission())
             startServiceAndTasks()
 
-
         mediaPlayer.setOnCompletionListener {
             mediaPlayer.reset()
             playMusic()
         }
         playlist.addAll(getPlaylist())
-        playMusic()
     }
 
     override fun onPause() {
@@ -86,7 +84,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        if (!mediaPlayer.isPlaying){
+        if (!mediaPlayer.isPlaying && lastActivity == "Running"){
             mediaPlayer.start()
         }
     }
@@ -283,6 +281,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         // Activity changed
         if (lastActivity != curActivity) {
+            if (curActivity == "Running") {
+                playMusic()
+            }
             saveActivity(curActivity)
             if (lastActivity != "") {
                 val tempTime = System.currentTimeMillis()
