@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">ActivityTracker</string>
+    <string name="current_activity">Current Activity: %1$s</string>
+    <string name="welcome">Welcome!</string>
+    <string name="detecting_activities">Detecting Activities…</string>
+    <string name="activity_image">ActivityImage</string>
+    <string name="no_permission">No Permission Granted</string>
 </resources>

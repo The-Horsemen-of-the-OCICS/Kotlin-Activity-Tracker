@@ -4,9 +4,10 @@ import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.Cursor
+import android.media.MediaPlayer
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -26,21 +27,26 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.net.PlacesClient
 import com.ocics.activitytracker.databinding.ActivityMainBinding
-import java.lang.Exception
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.collections.ArrayList
+
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
-    val TAG = "MainActivity"
+    private val TAG = "MainActivity"
 
-    var lastActivity = ""
-    var lastTransitionTime = System.currentTimeMillis()
+    private var lastActivity = ""
+    private var lastTransitionTime = System.currentTimeMillis()
+    private val mediaPlayer = MediaPlayer()
+    private val playlist = ArrayList<String>()
+    private var songIndex = 0
 
-    lateinit var mBinding: ActivityMainBinding
+    private lateinit var mBinding: ActivityMainBinding
+    private lateinit var db: DBHelper
 
     private lateinit var mMap: GoogleMap
     private lateinit var mFusedLocationProviderClient: FusedLocationProviderClient
-    lateinit var mPlacesClient: PlacesClient
+    private lateinit var mPlacesClient: PlacesClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,26 +54,41 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         mBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
 
+        db = DBHelper(this)
+
         // Init map
         val mapFragment = supportFragmentManager
             .findFragmentById(R.id.map) as SupportMapFragment
         mapFragment.getMapAsync(this)
-        Places.initialize(this, BuildConfig.MAPS_API_KEY);
+        Places.initialize(this, BuildConfig.MAPS_API_KEY)
         mPlacesClient = Places.createClient(this)
         mFusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(this)
 
-        getTimeText()
-        checkPermissionAndStartService()
+        if (checkPermission())
+            startServiceAndTasks()
+
+
+        mediaPlayer.setOnCompletionListener {
+            mediaPlayer.reset()
+            playMusic()
+        }
+        playlist.addAll(getPlaylist())
+        playMusic()
     }
 
-    private fun getTimeText() {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-        mBinding.timeText.text = sdf.format(Date())
+    override fun onPause() {
+        super.onPause()
+        if (mediaPlayer.isPlaying){
+            mediaPlayer.pause()
+        }
     }
 
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+        if (!mediaPlayer.isPlaying){
+            mediaPlayer.start()
+        }
     }
 
     private fun hideSystemBars() {
@@ -91,13 +112,16 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
     }
 
-    private fun checkPermissionAndStartService() {
+    private fun checkPermission(): Boolean {
         if (PackageManager.PERMISSION_GRANTED != ContextCompat.checkSelfPermission(
                 this@MainActivity,
                 Manifest.permission.ACTIVITY_RECOGNITION
             ) + ContextCompat.checkSelfPermission(
                 this@MainActivity,
                 Manifest.permission.ACCESS_FINE_LOCATION
+            )+ ContextCompat.checkSelfPermission(
+                this@MainActivity,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
             )
         ) {
             ActivityCompat.requestPermissions(
@@ -105,10 +129,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 arrayOf(
                     Manifest.permission.ACTIVITY_RECOGNITION,
                     Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
                 ), 1000
             )
+            return false
         } else {
-            startServiceAndTasks()
+            return true
         }
     }
 
@@ -120,6 +146,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         val pendingIntent = PendingIntent.getBroadcast(this, 2001,  Intent(packageName), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
         val task = ActivityRecognitionClient(this).requestActivityTransitionUpdates(getActivityTransitionRequest(),
             pendingIntent)
+
         task.run {
             addOnSuccessListener {
                 Log.d(TAG, "requestActivityTransitionUpdates added")
@@ -223,7 +250,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                         startServiceAndTasks()
                     }
                 } else {
-                    mBinding.activityText.text = "No Permission Granted"
+                    mBinding.activityText.text = getString(R.string.no_permission)
                 }
             }
         }
@@ -231,7 +258,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private fun onActivityChanged(activityType: Int) {
         Log.d(TAG, "onActivityChanged: $activityType")
-        var curActivity = ""
+        val curActivity: String
         var curDrawable = AppCompatResources.getDrawable(this, R.drawable.unknown_icon)
         when (activityType) {
             DetectedActivity.STILL -> {
@@ -256,6 +283,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         }
         // Activity changed
         if (lastActivity != curActivity) {
+            saveActivity(curActivity)
             if (lastActivity != "") {
                 val tempTime = System.currentTimeMillis()
                 val millDiff = tempTime - lastTransitionTime
@@ -269,7 +297,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 lastTransitionTime = tempTime
             }
             lastActivity = curActivity
-            mBinding.activityText.text = "Current Activity: " + curActivity
+            mBinding.activityText.text = getString(R.string.current_activity, curActivity)
             mBinding.activityImage.setImageDrawable(curDrawable)
         }
     }
@@ -305,4 +333,61 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             Log.e("Exception: %s", e.message, e)
         }
     }
+
+    // save data to SQLite
+    private fun saveActivity(type: String) {
+        val activity = Activity(type, SimpleDateFormat("yyyy-MM-dd hh:mm:ss a", Locale.getDefault()).format(Calendar.getInstance().time))
+        db.insertData(activity)
+        Log.d(TAG, "Data: " + db.getAllData().joinToString("\n"))
+    }
+
+    // search music files in /music, support mp3 and flac files
+    private fun getPlaylist(): Collection<String> {
+        val list = ArrayList<String>()
+        val args = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Video.Media.MIME_TYPE,
+            MediaStore.MediaColumns.DATA
+        )
+        val membersUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        val songCursor: Cursor? = contentResolver.query(membersUri, args, null, null, null)
+        val songIndex = 0 // PLAYING FROM THE FIRST SONG
+        if (songCursor != null) {
+            songCursor.moveToPosition(songIndex)
+            while (!songCursor.isAfterLast) {
+                if (songCursor.getString(3) == "audio/mpeg" || songCursor.getString(3) == "audio/flac")
+                    list.add(songCursor.getString(4))
+
+                songCursor.moveToNext()
+            }
+
+            songCursor.close()
+        }
+
+        Log.d("MusicDetected", playlist.count().toString())
+
+        return list
+    }
+
+    // play local music files
+    private fun playMusic() {
+        if (playlist.isEmpty()) return
+        val dataStream = playlist[songIndex]
+
+        // Move index to next song
+        songIndex += 1
+        if (songIndex >= playlist.count())
+            songIndex = 0
+
+        try {
+            mediaPlayer.setDataSource(dataStream)
+            mediaPlayer.prepare()
+            mediaPlayer.start()
+        } catch (e: java.lang.Exception) {
+            e.printStackTrace()
+        }
+    }
+
 }
