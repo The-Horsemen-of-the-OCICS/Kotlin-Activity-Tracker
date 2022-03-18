@@ -2,12 +2,13 @@ package com.ocics.activitytracker
 
 import android.Manifest
 import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.database.Cursor
-import android.media.MediaPlayer
 import android.os.Bundle
-import android.provider.MediaStore
+import android.os.IBinder
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -26,10 +27,10 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.net.PlacesClient
+import com.ocics.activitytracker.MediaPlayerService.LocalBinder
 import com.ocics.activitytracker.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.collections.ArrayList
 
 
 class MainActivity : AppCompatActivity(), OnMapReadyCallback {
@@ -37,9 +38,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     private var lastActivity = ""
     private var lastTransitionTime = System.currentTimeMillis()
-    private val mediaPlayer = MediaPlayer()
-    private val playlist = ArrayList<String>()
-    private var songIndex = 0
+    private var serviceBound = false
+    private lateinit var player: MediaPlayerService
 
     private lateinit var mBinding: ActivityMainBinding
     private lateinit var db: DBHelper
@@ -48,6 +48,18 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
     private lateinit var mFusedLocationProviderClient: FusedLocationProviderClient
     private lateinit var mPlacesClient: PlacesClient
 
+    private val serviceConnection: ServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            // We've bound to LocalService, cast the IBinder and get LocalService instance
+            val binder = service as MediaPlayerService.LocalBinder
+            player = binder.service
+            serviceBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            serviceBound = false
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Create view binding
@@ -67,26 +79,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (checkPermission())
             startServiceAndTasks()
 
-        mediaPlayer.setOnCompletionListener {
-            mediaPlayer.reset()
-            playMusic()
-        }
-        playlist.addAll(getPlaylist())
-    }
-
-    override fun onPause() {
-        super.onPause()
-        if (mediaPlayer.isPlaying){
-            mediaPlayer.pause()
-        }
+        startMusicService()
     }
 
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        if (!mediaPlayer.isPlaying && lastActivity == "Running"){
-            mediaPlayer.start()
-        }
     }
 
     private fun hideSystemBars() {
@@ -99,6 +97,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
 
     override fun onDestroy() {
         stopService(Intent(this, ActivityRecognitionService::class.java))
+        stopService(Intent(this, MediaPlayerService::class.java))
+        unbindService(serviceConnection)
         super.onDestroy()
     }
 
@@ -117,9 +117,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             ) + ContextCompat.checkSelfPermission(
                 this@MainActivity,
                 Manifest.permission.ACCESS_FINE_LOCATION
-            )+ ContextCompat.checkSelfPermission(
+            ) + ContextCompat.checkSelfPermission(
                 this@MainActivity,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
+                Manifest.permission.READ_EXTERNAL_STORAGE
             )
         ) {
             ActivityCompat.requestPermissions(
@@ -127,7 +127,7 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
                 arrayOf(
                     Manifest.permission.ACTIVITY_RECOGNITION,
                     Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    Manifest.permission.READ_EXTERNAL_STORAGE
                 ), 1000
             )
             return false
@@ -282,9 +282,9 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         // Activity changed
         if (lastActivity != curActivity) {
             if (curActivity == "Running") {
-                playMusic()
+                player.playMedia()
             } else {
-                mediaPlayer.pause()
+                player.pauseMedia()
             }
             saveActivity(curActivity)
             if (lastActivity != "") {
@@ -344,52 +344,12 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         Log.d(TAG, "Data: " + db.getAllData().joinToString("\n"))
     }
 
-    // search music files in /music, support mp3 and flac files
-    private fun getPlaylist(): Collection<String> {
-        val list = ArrayList<String>()
-        val args = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.DATA,
-            MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Video.Media.MIME_TYPE,
-            MediaStore.MediaColumns.DATA
-        )
-        val membersUri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val songCursor: Cursor? = contentResolver.query(membersUri, args, null, null, null)
-        val songIndex = 0 // PLAYING FROM THE FIRST SONG
-        if (songCursor != null) {
-            songCursor.moveToPosition(songIndex)
-            while (!songCursor.isAfterLast) {
-                if (songCursor.getString(3) == "audio/mpeg" || songCursor.getString(3) == "audio/flac")
-                    list.add(songCursor.getString(4))
-
-                songCursor.moveToNext()
-            }
-
-            songCursor.close()
-        }
-
-        Log.d("MusicDetected", playlist.count().toString())
-
-        return list
-    }
-
-    // play local music files
-    private fun playMusic() {
-        if (playlist.isEmpty()) return
-        val dataStream = playlist[songIndex]
-
-        // Move index to next song
-        songIndex += 1
-        if (songIndex >= playlist.count())
-            songIndex = 0
-
-        try {
-            mediaPlayer.setDataSource(dataStream)
-            mediaPlayer.prepare()
-            mediaPlayer.start()
-        } catch (e: java.lang.Exception) {
-            e.printStackTrace()
+    // start media player service
+    private fun startMusicService() {
+        if (!serviceBound) {
+            val playerIntent = Intent(this, MediaPlayerService::class.java)
+            startService(playerIntent)
+            bindService(playerIntent, serviceConnection, Context.BIND_AUTO_CREATE)
         }
     }
 }
