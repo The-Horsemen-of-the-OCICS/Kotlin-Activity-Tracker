@@ -283,6 +283,8 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
         if (lastActivity != curActivity) {
             if (curActivity == "Running") {
                 playMusic()
+            } else {
+                mediaPlayer.pause()
             }
             saveActivity(curActivity)
             if (lastActivity != "") {
@@ -390,5 +392,4 @@ class MainActivity : AppCompatActivity(), OnMapReadyCallback {
             e.printStackTrace()
         }
     }
-
 }
